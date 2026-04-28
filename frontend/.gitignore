@@ -7,6 +7,11 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+ARCHITECTURE.md
+ENHANCEMENT_PLAN.md
+FEATURE_SUMMARY.md
+IMPLEMENTATION_GUIDE.md
+QUICK_START.md
 node_modules
 dist
 dist-ssr

@@ -94,7 +94,7 @@ const ExerciseCoach = ({ postureLabelTrigger, poseLandmarks, faceLandmarks, onCo
     <>
       <div className="exercise-overlay" onClick={() => setActiveExercise(null)} />
       <div className="exercise-coach">
-        <div className="exercise-title">💪 {activeExercise.name}</div>
+        <div className="exercise-title">{activeExercise.name}</div>
         <div className="exercise-instruction">{activeExercise.instruction}</div>
 
         <div className="exercise-timer">
@@ -122,7 +122,7 @@ const ExerciseCoach = ({ postureLabelTrigger, poseLandmarks, faceLandmarks, onCo
         </div>
 
         <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '0.9rem', color: '#b0b0b0' }}>
-          {secondsHeld >= totalSeconds ? '✅ Complete!' : `Keep form steady for ${totalSeconds - secondsHeld}s`}
+          {secondsHeld >= totalSeconds ? 'Complete' : `Keep form steady for ${totalSeconds - secondsHeld}s`}
         </div>
       </div>
     </>

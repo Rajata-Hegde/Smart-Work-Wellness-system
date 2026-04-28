@@ -1,160 +1,142 @@
-export const analyzePosture = (poseLandmarks) => {
-  if (!poseLandmarks || poseLandmarks.length < 12) {
+/**
+ * Full Biomechanical Posture Analysis v3.0
+ * - Metric 1: Forward Head (Ear vs Shoulder)
+ * - Metric 2: Spinal Alignment (Nose-Shoulder-Hip Angle)
+ * - Metric 3: Shoulder Symmetry (Y delta)
+ * - Metric 4: Head Tilt (Ear Y delta)
+ * - Metric 5: Hip Slide Detection (Y drift)
+ * - Metric 6: Wrist Deviation (if hands visible)
+ */
+
+let previousLandmarks = null;
+const SMOOTHING_FACTOR = 0.2;
+
+let hipSlideHistory = []; // { time, y }
+let historicalScores = [];
+
+export const analyzePosture = (rawLandmarks) => {
+  if (!rawLandmarks || rawLandmarks.length < 25) return { 
+    label: 'Initializing...', 
+    score: 0, 
+    metrics: {}, 
+    isHorizontal: false 
+  };
+
+  // Smoothing
+  const landmarks = rawLandmarks.map((point, i) => {
+    if (!previousLandmarks) return point;
     return {
-      label: 'Pose not detected',
-      score: 0,
-      color: 'gray',
-      details: {},
+      x: point.x * SMOOTHING_FACTOR + previousLandmarks[i].x * (1 - SMOOTHING_FACTOR),
+      y: point.y * SMOOTHING_FACTOR + previousLandmarks[i].y * (1 - SMOOTHING_FACTOR),
+      z: point.z * SMOOTHING_FACTOR + previousLandmarks[i].z * (1 - SMOOTHING_FACTOR),
+      visibility: point.visibility
     };
+  });
+  previousLandmarks = landmarks;
+
+  const n = landmarks[0];
+  const le = landmarks[7];
+  const re = landmarks[8];
+  const ls = landmarks[11];
+  const rs = landmarks[12];
+  const lh = landmarks[23];
+  const rh = landmarks[24];
+  const lw = landmarks[15];
+  const rw = landmarks[16];
+  const lelb = landmarks[13];
+  const relb = landmarks[14];
+
+  // 0. Horizontal Check
+  const hipMidY = (lh.y + rh.y) / 2;
+  if (Math.abs(n.y - hipMidY) < 0.15) {
+    return { label: "Lying down", score: 0, isHorizontal: true, metrics: {} };
   }
 
-  // MediaPipe pose indices
-  const LEFT_SHOULDER = 11;
-  const RIGHT_SHOULDER = 12;
-  const LEFT_EAR = 7;
-  const RIGHT_EAR = 8;
-  const LEFT_HIP = 23;
-  const RIGHT_HIP = 24;
-  const NOSE = 0;
+  // Helper: Distance
+  const dist = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
 
-  const leftShoulder = poseLandmarks[LEFT_SHOULDER];
-  const rightShoulder = poseLandmarks[RIGHT_SHOULDER];
-  const leftEar = poseLandmarks[LEFT_EAR];
-  const rightEar = poseLandmarks[RIGHT_EAR];
-  const leftHip = poseLandmarks[LEFT_HIP];
-  const rightHip = poseLandmarks[RIGHT_HIP];
-  const nose = poseLandmarks[NOSE];
+  // --- METRIC 1: Forward Head Score ---
+  const earMid = { x: (le.x + re.x) / 2, y: (le.y + re.y) / 2 };
+  const shoulderMid = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
+  const headSize = dist(le, re) || 0.1;
+  const forwardHeadDist = Math.abs(earMid.x - shoulderMid.x);
+  const forwardHeadRatio = (forwardHeadDist / headSize) * 100;
+  let m1 = 100 - Math.min(100, (forwardHeadRatio / 15) * 100); // 15% head size is severe
 
-  if (!leftShoulder.visibility || !rightShoulder.visibility || leftShoulder.visibility < 0.5 || rightShoulder.visibility < 0.5) {
-    return {
-      label: 'Pose not detected',
-      score: 0,
-      color: 'gray',
-      details: {},
-    };
-  }
+  // --- METRIC 2: Spinal Alignment ---
+  const hipMidX = (lh.x + rh.x) / 2;
+  const angle = Math.abs(Math.atan2(hipMidX - shoulderMid.x, hipMidY - shoulderMid.y) * 180 / Math.PI);
+  let m2 = 100 - Math.min(100, (angle / 15) * 100); // 15 degrees is severe
 
-  let score = 100;
-  const issues = [];
-  const details = {};
+  // --- METRIC 3: Shoulder Symmetry ---
+  const shoulderWidth = dist(ls, rs) || 0.3;
+  const shoulderYDiff = Math.abs(ls.y - rs.y);
+  const shoulderSymRatio = (shoulderYDiff / shoulderWidth) * 100;
+  let m3 = 100 - Math.min(100, (shoulderSymRatio / 8) * 100); // 8% is severe
 
-  // Shoulder tilt angle (left vs right shoulder Y)
-  const shoulderTiltDiff = Math.abs(leftShoulder.y - rightShoulder.y);
-  const shoulderTiltThreshold = 0.05;
-  const shoulderTiltDegrees = shoulderTiltDiff * 100;
+  // --- METRIC 4: Head Tilt ---
+  const headTiltPx = Math.abs(le.y - re.y) * 1000; // Normalized to ~1000px height
+  let m4 = 100 - Math.min(100, (headTiltPx / 20) * 100); // 20px is severe
+
+  // --- METRIC 5: Hip Slide ---
+  const now = Date.now();
+  hipSlideHistory.push({ time: now, y: hipMidY });
+  const tenMinsAgo = now - 600000;
+  hipSlideHistory = hipSlideHistory.filter(h => h.time > tenMinsAgo);
   
-  if (shoulderTiltDiff > shoulderTiltThreshold) {
-    const isLeaningLeft = leftShoulder.y > rightShoulder.y;
-    if (shoulderTiltDegrees > 15) {
-      issues.push(isLeaningLeft ? 'Leaning left' : 'Leaning right');
-      score -= 20;
-    } else {
-      score -= 10;
-    }
+  let m5 = 100;
+  if (hipSlideHistory.length > 2) {
+    const drift = hipMidY - hipSlideHistory[0].y;
+    // 0.04 normalized is approx 40px
+    m5 = 100 - Math.min(100, (Math.max(0, drift) / 0.04) * 100);
   }
-  details.shoulderTilt = shoulderTiltDegrees.toFixed(1);
 
-  // Forward head detection (ear X position relative to shoulder)
-  const headCenterX = (leftEar.x + rightEar.x) / 2;
-  const shoulderCenterX = (leftShoulder.x + rightShoulder.x) / 2;
-  const headForwardness = Math.abs(headCenterX - shoulderCenterX) * 100;
-
-  if (headForwardness > 15) {
-    issues.push('Forward head');
-    score -= 20;
+  // --- METRIC 6: Wrist Deviation ---
+  let m6 = 100;
+  if (lw.visibility > 0.5 && rw.visibility > 0.5) {
+    const lAngle = Math.abs(Math.atan2(lw.y - lelb.y, lw.x - lelb.x) * 180 / Math.PI);
+    const rAngle = Math.abs(Math.atan2(rw.y - relb.y, rw.x - relb.x) * 180 / Math.PI);
+    const maxDev = Math.max(lAngle, rAngle);
+    if (maxDev > 20) m6 = 80; // Simple penalty
   }
-  details.headForward = headForwardness.toFixed(1);
 
-  // Slouching detection (shoulder Y vs hip Y comparison)
-  const hipCenterY = (leftHip.y + rightHip.y) / 2;
-  const shoulderCenterY = (leftShoulder.y + rightShoulder.y) / 2;
-  const hipCenterX = (leftHip.x + rightHip.x) / 2;
-  const shoulderCenterXAdjusted = (leftShoulder.x + rightShoulder.x) / 2;
+  // COMPOSITE SCORE
+  const composite = Math.round(
+    (m1 * 0.35) + 
+    (m2 * 0.30) + 
+    (m3 * 0.15) + 
+    (m4 * 0.10) + 
+    (m5 * 0.10)
+  );
 
-  // Z-axis depth check for slouching
-  const shoulderBackness = Math.abs(leftShoulder.z + rightShoulder.z) / 2;
-  const hipBackness = Math.abs(leftHip.z + rightHip.z) / 2;
-  const depthDiff = shoulderBackness - hipBackness;
-
-  if (shoulderCenterY > hipCenterY + 0.05) {
-    issues.push('Slouching');
-    score -= 25;
-  }
-  details.slouching = (shoulderCenterY - hipCenterY).toFixed(3);
-
-  // Normalize score
-  score = Math.max(0, Math.min(100, score));
-
-  // Determine primary issue and color
-  let label = 'Good posture';
-  let color = 'green';
-
-  if (issues.length > 0) {
-    label = issues[0];
-    if (score >= 70) {
-      color = 'yellow';
-    } else if (score >= 40) {
-      color = 'orange';
-    } else {
-      color = 'red';
-    }
-  } else if (score < 85) {
-    color = 'yellow';
-  }
+  // Labels
+  let label = 'Excellent';
+  if (composite < 50) label = 'Severe Slouch';
+  else if (m1 < 50) label = 'Forward Head';
+  else if (m5 < 50) label = 'Sliding Off Chair';
+  else if (composite < 80) label = 'Good';
 
   return {
     label,
-    score: Math.round(score),
-    color,
-    details,
-    issues,
+    score: composite,
+    metrics: {
+      forwardHead: Math.round(m1),
+      alignment: Math.round(m2),
+      symmetry: Math.round(m3),
+      headTilt: Math.round(m4),
+      hipSlide: Math.round(m5),
+      wrist: Math.round(m6)
+    },
+    isHorizontal: false
   };
 };
 
-export const analyzeDistance = (faceLandmarks) => {
-  if (!faceLandmarks || faceLandmarks.length < 400) {
-    return {
-      status: 'not-detected',
-      message: 'Move closer to camera',
-      distance: 0,
-    };
-  }
+export const startCalibration = () => {
+  previousLandmarks = null;
+  hipSlideHistory = [];
+};
 
-  // Left and right eye indices in MediaPipe face mesh
-  const LEFT_EYE_OUTER = 33;
-  const RIGHT_EYE_OUTER = 263;
-
-  const leftEyeOuter = faceLandmarks[LEFT_EYE_OUTER];
-  const rightEyeOuter = faceLandmarks[RIGHT_EYE_OUTER];
-
-  if (!leftEyeOuter || !rightEyeOuter) {
-    return {
-      status: 'not-detected',
-      message: 'Face not detected',
-      distance: 0,
-    };
-  }
-
-  // Calculate distance between eyes in pixels
-  const eyeDistance = Math.sqrt(
-    Math.pow(rightEyeOuter.x - leftEyeOuter.x, 2) +
-    Math.pow(rightEyeOuter.y - leftEyeOuter.y, 2)
-  ) * 500; // Approximate scaling
-
-  let status = 'ideal';
-  let message = '📍 Ideal distance';
-
-  if (eyeDistance < 60) {
-    status = 'too-close';
-    message = '👁️ Too close! Move back';
-  } else if (eyeDistance > 120) {
-    status = 'too-far';
-    message = '👁️ Too far! Move closer';
-  }
-
-  return {
-    status,
-    message,
-    distance: Math.round(eyeDistance),
-  };
+export const processCalibrationFrame = (landmarks) => {
+  // Simple 3s wait handled by App.jsx, but we could store baseline here
+  return true; // Calibration done
 };

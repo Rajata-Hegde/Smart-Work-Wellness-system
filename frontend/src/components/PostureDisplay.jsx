@@ -38,7 +38,7 @@ const PostureDisplay = ({ poseLandmarks, faceLandmarks }) => {
 
   return (
     <div className="posture-display card">
-      <h3>📊 Posture Monitor</h3>
+      <h3>Posture</h3>
 
       <div className="posture-badge" style={{ borderColor: colorMap[posture.color] }}>
         <div className="posture-label" style={{ color: colorMap[posture.color] }}>
@@ -74,7 +74,7 @@ const PostureDisplay = ({ poseLandmarks, faceLandmarks }) => {
           <div className="issues-title">Areas to improve:</div>
           <ul>
             {posture.issues.map((issue, idx) => (
-              <li key={idx}>• {issue}</li>
+              <li key={idx}>{issue}</li>
             ))}
           </ul>
         </div>

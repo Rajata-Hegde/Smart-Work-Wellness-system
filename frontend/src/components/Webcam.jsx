@@ -1,255 +1,195 @@
-import { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { Camera, RefreshCw, AlertTriangle } from 'lucide-react';
+import useWellnessStore from '../store/useWellnessStore';
+
+// Global singleton to prevent double-initialization in React Strict Mode/HMR
+let globalHolistic = null;
+let globalCamera = null;
 
 const Webcam = ({ onResults }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const holisticRef = useRef(null);
-  const cameraRef = useRef(null);
+  const requestRef = useRef();
+  
+  const { session, setSessionStatus } = useWellnessStore();
+  const onResultsRef = useRef(onResults);
+  const sessionStatusRef = useRef(session.status);
+  
+  useEffect(() => { onResultsRef.current = onResults; }, [onResults]);
+  useEffect(() => { sessionStatusRef.current = session.status; }, [session.status]);
 
-  // Define connections manually
-  const POSE_CONNECTIONS = [
-    [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8],
-    [9, 10], [11, 12], [11, 13], [13, 15], [15, 17], [15, 19], [15, 21],
-    [17, 19], [12, 14], [14, 16], [16, 18], [16, 20], [18, 20], [11, 23],
-    [12, 24], [23, 24], [23, 25], [24, 26], [25, 27], [26, 28], [27, 29],
-    [28, 30], [29, 31], [30, 32], [27, 31], [28, 32]
-  ];
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [error, setError] = useState(null);
+  const [fps, setFps] = useState(0);
+  const lastFrameTime = useRef(Date.now());
+  const lastResults = useRef(null);
 
-  const HAND_CONNECTIONS = [
-    [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
-    [0, 9], [9, 10], [10, 11], [11, 12], [0, 13], [13, 14], [14, 15],
-    [15, 16], [0, 17], [17, 18], [18, 19], [19, 20]
-  ];
+  const POSE_CONNECTIONS = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24]];
+  const FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
 
-  const FACEMESH_TESSELATION = [
-    [0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8],
-    [8, 9], [9, 10], [10, 11], [11, 12], [12, 13], [13, 14], [14, 15],
-    [15, 16], [16, 17], [17, 18], [18, 19], [19, 20]
-  ];
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
 
-  const drawConnectors = (ctx, landmarks, connections, style) => {
-    const color = style.color || '#ffffff';
-    const lineWidth = style.lineWidth || 1;
-    
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-    
-    for (const [start, end] of connections) {
-      if (landmarks[start] && landmarks[end]) {
-        const startX = landmarks[start].x * ctx.canvas.width;
-        const startY = landmarks[start].y * ctx.canvas.height;
-        const endX = landmarks[end].x * ctx.canvas.width;
-        const endY = landmarks[end].y * ctx.canvas.height;
-        
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        ctx.lineTo(endX, endY);
-        ctx.stroke();
-      }
+    const ctx = canvas.getContext('2d');
+    if (video.videoWidth > 0 && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
     }
-  };
 
-  const drawLandmarks = (ctx, landmarks, style) => {
-    const radius = style.radius || 3;
-    const color = style.color || '#ffffff';
-    
-    ctx.fillStyle = color;
-    
-    for (const landmark of landmarks) {
-      if (landmark && landmark.x !== undefined && landmark.y !== undefined) {
-        const x = landmark.x * ctx.canvas.width;
-        const y = landmark.y * ctx.canvas.height;
-        
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, 2 * Math.PI);
-        ctx.fill();
-      }
-    }
-  };
+    if (canvas.width > 0) {
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  useEffect(() => {
-    let holistic;
-    let camera;
-
-    const initializeMediaPipe = async () => {
-      try {
-        // Load scripts if not already loaded
-        if (!window.Holistic) {
-          console.log('Loading MediaPipe Holistic from CDN...');
-          const script1 = document.createElement('script');
-          script1.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js';
-          script1.async = true;
-          document.head.appendChild(script1);
-
-          const script2 = document.createElement('script');
-          script2.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js';
-          script2.async = true;
-          document.head.appendChild(script2);
-
-          // Wait for scripts to load
-          await new Promise((resolve) => {
-            const checkInterval = setInterval(() => {
-              if (window.Holistic && window.Camera) {
-                console.log('MediaPipe libraries loaded');
-                clearInterval(checkInterval);
-                resolve();
-              }
-            }, 100);
-            setTimeout(() => {
-              clearInterval(checkInterval);
-              resolve();
-            }, 10000);
+      if (lastResults.current) {
+        const res = lastResults.current;
+        if (res.poseLandmarks) {
+          ctx.strokeStyle = '#10B981';
+          ctx.lineWidth = 3;
+          POSE_CONNECTIONS.forEach(([s, e]) => {
+            const a = res.poseLandmarks[s];
+            const b = res.poseLandmarks[e];
+            if (a && b && a.visibility > 0.5 && b.visibility > 0.5) {
+              ctx.beginPath();
+              ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
+              ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
+              ctx.stroke();
+            }
           });
         }
+        if (res.faceLandmarks) {
+          ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          FACE_OVAL.forEach((idx, i) => {
+            const p = res.faceLandmarks[idx];
+            if (i === 0) ctx.moveTo(p.x * canvas.width, p.y * canvas.height);
+            else ctx.lineTo(p.x * canvas.width, p.y * canvas.height);
+          });
+          ctx.closePath();
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+    requestRef.current = requestAnimationFrame(draw);
+  }, []);
 
-        if (!window.Holistic || !window.Camera) {
-          console.error('MediaPipe failed to load');
+  useEffect(() => {
+    requestRef.current = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(requestRef.current);
+  }, [draw]);
+
+  const handleMediaPipeResults = useCallback((results) => {
+    lastResults.current = results;
+    const now = Date.now();
+    setFps(Math.round(1000 / (now - lastFrameTime.current)));
+    lastFrameTime.current = now;
+
+    if (onResultsRef.current) {
+      onResultsRef.current({
+        pose: results.poseLandmarks,
+        face: results.faceLandmarks,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const HolisticClass = window.Holistic || (window.mpHolistic && window.mpHolistic.Holistic);
+        const CameraClass = window.Camera;
+
+        if (!HolisticClass || !CameraClass) {
+          setTimeout(init, 1000);
           return;
         }
 
-        holistic = new window.Holistic({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`,
-        });
+        if (!globalHolistic) {
+          globalHolistic = new HolisticClass({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`,
+          });
 
-        holistic.setOptions({
-          modelComplexity: 1,
-          smoothLandmarks: true,
-          enableSegmentation: false,
-          smoothSegmentation: false,
-          refineFaceLandmarks: true,
-          minDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        });
+          globalHolistic.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            refineFaceLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+          });
 
-        holisticRef.current = holistic;
+          globalHolistic.onResults(handleMediaPipeResults);
+        }
 
-        holistic.onResults(handleResults);
-
-        if (videoRef.current) {
-          camera = new window.Camera(videoRef.current, {
+        if (videoRef.current && !globalCamera) {
+          globalCamera = new CameraClass(videoRef.current, {
             onFrame: async () => {
-              if (holistic && videoRef.current) {
+              if (globalHolistic && videoRef.current && sessionStatusRef.current === 'active') {
                 try {
-                  await holistic.send({ image: videoRef.current });
-                } catch (error) {
-                  console.error('Error sending frame to Holistic:', error);
+                  await globalHolistic.send({ image: videoRef.current });
+                } catch (e) {
+                  console.warn("MediaPipe busy");
                 }
               }
             },
             width: 1280,
             height: 720,
           });
-
-          cameraRef.current = camera;
-          camera.start();
-          console.log('Camera started successfully');
+          await globalCamera.start();
+          setIsLoaded(true);
+          setSessionStatus('active');
+        } else if (globalCamera) {
+          // Camera already exists, just mark as loaded
+          setIsLoaded(true);
         }
-      } catch (error) {
-        console.error('MediaPipe initialization error:', error);
+      } catch (err) {
+        console.error("Webcam Error:", err);
+        setError(`Vision Engine Error: ${err.message}`);
       }
     };
 
-    // Start initialization after a small delay to ensure DOM is ready
-    const timer = setTimeout(initializeMediaPipe, 500);
-
+    init();
     return () => {
-      clearTimeout(timer);
-      if (cameraRef.current) {
-        cameraRef.current.stop();
-      }
+      // We don't close the global singleton on unmount to prevent restart issues
+      // But we should stop the requestAnimationFrame
+      cancelAnimationFrame(requestRef.current);
     };
-  }, []);
-
-  const handleResults = (results) => {
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    
-    if (!canvas || !video) return;
-
-    const ctx = canvas.getContext('2d');
-    
-    // Set canvas size to match video dimensions
-    if (video.videoWidth > 0 && video.videoHeight > 0) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-    }
-
-    // Always draw the video frame first
-    try {
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      }
-    } catch (error) {
-      console.error('Error drawing video frame:', error);
-    }
-
-    // Then draw landmarks on top
-    if (results && results.poseLandmarks && results.poseLandmarks.length > 0) {
-      drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, {
-        color: '#00FF00',
-        lineWidth: 2,
-      });
-      drawLandmarks(ctx, results.poseLandmarks, {
-        color: '#FF0000',
-        radius: 3,
-      });
-    }
-
-    if (results && results.faceLandmarks && results.faceLandmarks.length > 0) {
-      drawConnectors(ctx, results.faceLandmarks, FACEMESH_TESSELATION, {
-        color: '#CCCCCC',
-        lineWidth: 1,
-      });
-    }
-
-    if (results && results.leftHandLandmarks && results.leftHandLandmarks.length > 0) {
-      drawConnectors(ctx, results.leftHandLandmarks, HAND_CONNECTIONS, {
-        color: '#FFFF00',
-        lineWidth: 2,
-      });
-      drawLandmarks(ctx, results.leftHandLandmarks, {
-        color: '#FF00FF',
-        radius: 2,
-      });
-    }
-
-    if (results && results.rightHandLandmarks && results.rightHandLandmarks.length > 0) {
-      drawConnectors(ctx, results.rightHandLandmarks, HAND_CONNECTIONS, {
-        color: '#FFFF00',
-        lineWidth: 2,
-      });
-      drawLandmarks(ctx, results.rightHandLandmarks, {
-        color: '#FF00FF',
-        radius: 2,
-      });
-    }
-
-    // Pass landmark data to parent component
-    onResults({
-      pose: results?.poseLandmarks || null,
-      face: results?.faceLandmarks || null,
-      leftHand: results?.leftHandLandmarks || null,
-      rightHand: results?.rightHandLandmarks || null,
-    });
-  };
+  }, [handleMediaPipeResults, setSessionStatus]);
 
   return (
-    <div style={{ position: 'relative', width: '100%', maxWidth: '1280px', margin: '0 auto' }}>
-      <video
-        ref={videoRef}
-        style={{ display: 'none' }}
-      />
-      <canvas
-        ref={canvasRef}
-        style={{
-          width: '100%',
-          maxWidth: '1280px',
-          backgroundColor: '#000',
-          borderRadius: '8px',
-        }}
-      />
+    <div style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: '#000' }}>
+      <video ref={videoRef} style={{ display: 'none' }} playsInline muted />
+      <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+
+      {!isLoaded && !error && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'white', backgroundColor: '#000' }}>
+          <RefreshCw size={32} className="animate-spin" style={{ marginBottom: '16px' }} />
+          <p style={{ fontSize: '0.875rem', fontWeight: 500 }}>Initializing Vision Engine...</p>
+        </div>
+      )}
+
+      {error && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#FF4444', backgroundColor: '#000', padding: '24px', textAlign: 'center' }}>
+          <AlertTriangle size={48} style={{ marginBottom: '16px' }} />
+          <p style={{ color: 'white', marginBottom: '8px' }}>{error}</p>
+          <button onClick={() => window.location.reload()} style={{ color: '#3B82F6', fontSize: '0.875rem', fontWeight: 600 }}>Try Again</button>
+        </div>
+      )}
+
+      {isLoaded && (
+        <div style={{ position: 'absolute', top: '16px', left: '16px', display: 'flex', gap: '8px' }}>
+          <div style={{ backgroundColor: 'rgba(0,0,0,0.6)', padding: '4px 8px', borderRadius: '4px', color: 'white', fontSize: '0.625rem', fontWeight: 800 }}>
+            {fps} FPS
+          </div>
+          <div style={{ backgroundColor: 'rgba(0,0,0,0.6)', padding: '4px 8px', borderRadius: '4px', color: '#10B981', fontSize: '0.625rem', fontWeight: 800 }}>
+            VISION LIVE
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-export default Webcam;
+export default React.memo(Webcam);

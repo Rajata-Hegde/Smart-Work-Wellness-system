@@ -1,160 +1,293 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
+import useWellnessStore from './store/useWellnessStore';
+import DashboardLayout from './components/layouts/DashboardLayout';
+import LandingPage from './components/landing/LandingPage';
 import Webcam from './components/Webcam';
-import PostureDisplay from './components/PostureDisplay';
-import FatigueAlert from './components/FatigueAlert';
-import ExerciseCoach from './components/ExerciseCoach';
-import WellnessDashboard from './components/WellnessDashboard';
-import { analyzePosture } from './utils/postureAnalysis';
-import { detectGesture } from './utils/gestureDetection';
+import ScoreCard from './components/dashboard/ScoreCard';
+import AlertsPanel from './components/dashboard/AlertsPanel';
+import ExerciseCoach from './components/dashboard/ExerciseCoach';
+import AnalyticsDashboard from './components/dashboard/AnalyticsDashboard';
+import AICoach from './components/dashboard/AICoach';
+import HydrationTracker from './components/dashboard/HydrationTracker';
+
+// New Components
+import RPGPanel from './components/dashboard/RPGPanel';
+import StateBadge from './components/dashboard/StateBadge';
+import EnvironmentCard from './components/dashboard/EnvironmentCard';
+import TodayJourney from './components/dashboard/TodayJourney';
+import MicroRecovery from './components/dashboard/MicroRecovery';
+import PostureDetails from './components/dashboard/PostureDetails';
+
+// Icons
+import { LayoutDashboard, Eye, Target, Zap, Waves, Brain, Moon, User, Clock, Droplets, ShieldCheck } from 'lucide-react';
+
+// Utils
+import { analyzePosture, startCalibration, processCalibrationFrame } from './utils/postureAnalysis';
+import { analyzeEyes, detectYawn } from './utils/eyeAnalysis';
+import { analyzeAttention } from './utils/attentionAnalysis';
+import { analyzeStress } from './utils/stressAnalysis';
+import { analyzeEnvironment } from './utils/environmentAnalysis';
+import { analyzeFlow, getBodyLanguageState } from './utils/flowAnalysis';
 
 function App() {
-  const [landmarkResults, setLandmarkResults] = useState({
-    pose: null,
-    face: null,
-    leftHand: null,
-    rightHand: null,
+  const [started, setStarted] = useState(false);
+  const [calibrating, setCalibrating] = useState(false);
+  const [recoveryActive, setRecoveryActive] = useState(false);
+  
+  const { 
+    session, 
+    scores, 
+    updateScores, 
+    updateDetections, 
+    addAlert, 
+    addHistorySnapshot, 
+    activeExercise,
+    resetSession,
+    setSessionStatus,
+    setBodyLanguage,
+    setStressIndex,
+    setEnvironmentScore,
+    addXP,
+    addTimelineEvent,
+    detections,
+    rpg,
+    bodyLanguageState,
+    settings,
+    setIsHorizontal
+  } = useWellnessStore();
+
+  const analysisStateRef = useRef({
+    eyeData: null,
+    latestResults: null,
+    typing: { lastKeyTime: 0, intervals: [] }
   });
 
-  const [postureTrigger, setPostureTrigger] = useState(null);
-  const [alertSnoozedUntil, setAlertSnoozedUntil] = useState(null);
-  const [completedExercises, setCompletedExercises] = useState([]);
-  const postureStateRef = useRef({
-    lastLabel: null,
-    issueStartTime: null,
-  });
-  const gestureStateRef = useRef({
-    lastGesture: null,
-    gestureStartTime: null,
-  });
+  const lastUpdateRef = useRef({ store: 0, history: 0, flow: 0, level: 1 });
 
-  const handleWebcamResults = (results) => {
-    setLandmarkResults(results);
+  const speak = useCallback((text) => {
+    if (!settings.voiceAlerts || !window.speechSynthesis) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.9;
+    window.speechSynthesis.speak(utterance);
+  }, [settings.voiceAlerts]);
 
-    // Track posture issues for exercise coach
-    if (results.pose) {
-      const postureAnalysis = analyzePosture(results.pose);
-      const currentLabel = postureAnalysis.label;
-
-      if (currentLabel !== 'Good posture' && currentLabel !== 'Pose not detected') {
-        if (postureStateRef.current.lastLabel === currentLabel) {
-          const duration = (Date.now() - postureStateRef.current.issueStartTime) / 1000;
-          if (duration > 5) {
-            setPostureTrigger(currentLabel);
-          }
-        } else {
-          postureStateRef.current.lastLabel = currentLabel;
-          postureStateRef.current.issueStartTime = Date.now();
+  useEffect(() => {
+    const handleKeyDown = () => {
+      const now = Date.now();
+      if (analysisStateRef.current.typing.lastKeyTime > 0) {
+        const interval = now - analysisStateRef.current.typing.lastKeyTime;
+        if (interval < 2000) {
+          analysisStateRef.current.typing.intervals.push(interval);
+          if (analysisStateRef.current.typing.intervals.length > 20) analysisStateRef.current.typing.intervals.shift();
         }
-      } else {
-        postureStateRef.current.lastLabel = null;
-        postureStateRef.current.issueStartTime = null;
-        setPostureTrigger(null);
       }
-    }
+      analysisStateRef.current.typing.lastKeyTime = now;
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
-    // Detect gestures
-    const gesture = detectGesture(results.leftHand, results.rightHand);
-
-    if (gesture) {
-      if (gestureStateRef.current.lastGesture === gesture) {
-        const duration = (Date.now() - gestureStateRef.current.gestureStartTime) / 1000;
-        if (duration > 1) {
-          handleGesture(gesture);
-          gestureStateRef.current.lastGesture = null;
-        }
-      } else {
-        gestureStateRef.current.lastGesture = gesture;
-        gestureStateRef.current.gestureStartTime = Date.now();
-      }
-    } else {
-      gestureStateRef.current.lastGesture = null;
-      gestureStateRef.current.gestureStartTime = null;
-    }
-  };
-
-  const handleGesture = (gesture) => {
-    if (gesture === 'markDone') {
-      if (postureTrigger) {
-        setCompletedExercises((prev) => [...prev, postureTrigger]);
-        setPostureTrigger(null);
-        speakFeedback('Exercise marked as done');
-      }
-    } else if (gesture === 'snoozeAlert') {
-      setAlertSnoozedUntil(Date.now() + 5 * 60 * 1000);
-      speakFeedback('Alerts snoozed for 5 minutes');
-    } else if (gesture === 'dismiss') {
-      setPostureTrigger(null);
-      speakFeedback('Alert dismissed');
-    }
-  };
-
-  const speakFeedback = (message) => {
-    if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(message);
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      utterance.volume = 0.8;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-    }
-  };
-
-  const handleExerciseComplete = (exerciseName) => {
-    setCompletedExercises((prev) => [...prev, exerciseName]);
-    setPostureTrigger(null);
+  const calculateTypingVariance = () => {
+    const intervals = analysisStateRef.current.typing.intervals;
+    if (intervals.length < 5) return 0;
+    const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+    const variance = intervals.map(i => Math.pow(i - avg, 2)).reduce((a, b) => a + b, 0) / intervals.length;
+    return Math.sqrt(variance) / avg;
   };
 
   useEffect(() => {
-    if (!alertSnoozedUntil) return;
+    if (rpg.level > lastUpdateRef.current.level) {
+      addAlert({ severity: 'success', message: `LEVEL UP! You reached level ${rpg.level}`, type: 'system' });
+      speak(`Congratulations! You reached level ${rpg.level}`);
+      lastUpdateRef.current.level = rpg.level;
+    }
+  }, [rpg.level, addAlert, speak]);
 
-    const timeout = setTimeout(() => {
-      if (Date.now() >= alertSnoozedUntil) {
-        setAlertSnoozedUntil(null);
+  useEffect(() => {
+    if (bodyLanguageState === 'Overwhelmed' && !recoveryActive) {
+      setRecoveryActive(true);
+      speak("You seem overwhelmed. Starting micro-recovery protocol.");
+    }
+  }, [bodyLanguageState, recoveryActive, speak]);
+
+  const handleDetectionResults = useCallback((results) => {
+    if (!results) return;
+    analysisStateRef.current.latestResults = results;
+
+    if (calibrating) {
+      const done = processCalibrationFrame(results.pose);
+      if (done) {
+        setCalibrating(false);
+        addAlert({ severity: 'success', message: 'Calibration Complete!', type: 'system' });
       }
-    }, 5 * 60 * 1000);
+      return;
+    }
 
-    return () => clearTimeout(timeout);
-  }, [alertSnoozedUntil]);
+    const typingVar = calculateTypingVariance();
+    const p = analyzePosture(results.pose);
+    
+    setIsHorizontal(p.isHorizontal);
+    if (p.isHorizontal) return;
 
-  const shouldShowAlerts = !alertSnoozedUntil || Date.now() > alertSnoozedUntil;
+    const e = analyzeEyes(results.face);
+    const a = analyzeAttention(results.face);
+    const s = analyzeStress(results.face, typingVar);
+    const f = analyzeFlow({ 
+      gazeQuadrant: a.quadrant, 
+      typingVariance: typingVar, 
+      postureScore: p.score, 
+      blinkRate: e.blinkRate 
+    });
+    
+    const bodyState = getBodyLanguageState(p.score, s.stressIndex, typingVar);
+    analysisStateRef.current.lastAnalysis = { p, e, a, s, f, bodyState, typingVar };
+  }, [calibrating, addAlert, setIsHorizontal]);
+
+  useEffect(() => {
+    if (!started || session.status !== 'active') return;
+
+    const interval = setInterval(() => {
+      if (session.isHorizontal) return;
+
+      const data = analysisStateRef.current.lastAnalysis;
+      if (!data) return;
+
+      const { p, e, a, s, f, bodyState, typingVar } = data;
+
+      updateScores({ posture: p.score, eyes: e.fatigueScore, focus: a.focusScore, stress: s.stressIndex });
+      updateDetections({
+        postureState: p.label,
+        postureConfidence: p.confidence || 100,
+        postureMetrics: p.metrics, // Pass detailed metrics
+        blinkRate: e.blinkRate,
+        focusStatus: a.status,
+        gazeQuadrant: a.quadrant,
+        typingVariance: typingVar
+      });
+
+      setBodyLanguage(bodyState);
+      setStressIndex(s.stressIndex);
+
+      if (p.score < 60) {
+        addAlert({ severity: 'warning', message: `Posture Alert: ${p.label}`, type: 'posture' });
+      }
+      if (e.microsleep) {
+        addAlert({ severity: 'error', message: 'Microsleep detected!', type: 'fatigue' });
+        speak("Microsleep detected. Please wake up and take a break.");
+      }
+
+      if (f.isInFlow && !session.flowActive) {
+        useWellnessStore.setState(s => ({ session: { ...s.session, flowActive: true, flowSessions: s.session.flowSessions + 1 } }));
+        addTimelineEvent({ type: 'flow', value: 'Started' });
+        addAlert({ severity: 'success', message: 'Flow State Detected. Silencing alerts.', type: 'flow' });
+      } else if (!f.isInFlow && session.flowActive) {
+        useWellnessStore.setState(s => ({ session: { ...s.session, flowActive: false } }));
+        addTimelineEvent({ type: 'flow', value: 'Ended' });
+      }
+
+      if (p.score > 90) addXP(5);
+      
+      const now = Date.now();
+      if (now - lastUpdateRef.current.history > 5000) {
+        addHistorySnapshot();
+        lastUpdateRef.current.history = now;
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [started, session.status, session.flowActive, session.isHorizontal, updateScores, updateDetections, addAlert, addHistorySnapshot, addXP, addTimelineEvent, setBodyLanguage, setStressIndex, speak]);
+
+  useEffect(() => {
+    if (!started || session.status !== 'active') return;
+    const interval = setInterval(() => {
+      const video = document.querySelector('video');
+      if (video) {
+        const env = analyzeEnvironment(video);
+        setEnvironmentScore(env.score);
+        if (env.issue) addAlert({ severity: 'info', message: env.issue, type: 'env' });
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [started, session.status, setEnvironmentScore, addAlert]);
+
+  const handleStart = () => {
+    resetSession();
+    setStarted(true);
+    setSessionStatus('active');
+  };
+
+  const handleCalibrate = () => {
+    startCalibration();
+    setCalibrating(true);
+    addAlert({ severity: 'info', message: 'Stay still for 3 seconds...', type: 'system' });
+  };
+
+  if (!started) return <LandingPage onStart={handleStart} />;
 
   return (
-    <div className="app-container">
-      <header className="app-header">
-        <h1>🏥 SMART HEALTH</h1>
-        <p>Real-time posture & wellness monitor</p>
-      </header>
-
-      <main className="app-main">
-        <div className="webcam-section">
-          <Webcam onResults={handleWebcamResults} />
+    <div className={session.flowActive ? 'flow-glow' : ''}>
+      {recoveryActive && <MicroRecovery onComplete={() => setRecoveryActive(false)} />}
+      
+      {session.isHorizontal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(0,0,0,0.7)',
+          zIndex: 3000,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'white',
+          backdropFilter: 'blur(5px)'
+        }}>
+          <Moon size={64} style={{ marginBottom: '20px', color: '#3B82F6' }} />
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800 }}>Lying Down Detected</h2>
+          <p style={{ marginTop: '10px', color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>Session paused while you rest.</p>
         </div>
+      )}
 
-        <div className="feedback-section">
-          <PostureDisplay 
-            poseLandmarks={landmarkResults.pose}
-            faceLandmarks={landmarkResults.face}
-          />
-          {shouldShowAlerts && (
-            <FatigueAlert 
-              faceLandmarks={landmarkResults.face}
-              poseLandmarks={landmarkResults.pose}
+      <DashboardLayout
+        webcamModule={<Webcam onResults={handleDetectionResults} />}
+        scoreCards={
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-md)', width: '100%', position: 'relative' }}>
+            <div style={{ position: 'relative' }}>
+               <ScoreCard title="Posture" value={scores.posture} icon={ShieldCheck} unit="%" />
+               <PostureDetails metrics={detections.postureMetrics} />
+               <div style={{ position: 'absolute', top: '10px', right: '10px', zIndex: 10 }}>
+                  <button onClick={handleCalibrate} className="calibrate-btn">CALIBRATE</button>
+               </div>
+            </div>
+            <ScoreCard title="Eye Health" value={scores.eyes} icon={Eye} unit={`% (${detections.blinkRate} bpm)`} />
+            <ScoreCard title="Focus" value={scores.focus} icon={Target} unit={`% (Zone ${detections.gazeQuadrant})`} />
+            <ScoreCard title="Stress Index" value={100 - scores.stress} icon={Brain} unit="%" />
+          </div>
+        }
+        aiCoach={<AICoach />}
+        alertsPanel={<AlertsPanel />}
+        hydrationTracker={<HydrationTracker />}
+        exerciseCoach={
+          activeExercise && (
+            <ExerciseCoach 
+              activeExercise={activeExercise}
+              poseLandmarks={analysisStateRef.current.latestResults?.pose}
+              onComplete={() => { addXP(100); useWellnessStore.setState({ activeExercise: null }); }}
+              onSkip={() => useWellnessStore.setState({ activeExercise: null })}
             />
-          )}
-        </div>
-      </main>
-
-      <ExerciseCoach
-        postureLabelTrigger={postureTrigger}
-        poseLandmarks={landmarkResults.pose}
-        faceLandmarks={landmarkResults.face}
-        onComplete={handleExerciseComplete}
-      />
-
-      <WellnessDashboard
-        poseLandmarks={landmarkResults.pose}
-        faceLandmarks={landmarkResults.face}
+          )
+        }
+        analyticsDashboard={
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-md)' }}>
+              <StateBadge />
+              <RPGPanel />
+              <EnvironmentCard />
+            </div>
+            <AnalyticsDashboard />
+            <TodayJourney />
+          </div>
+        }
       />
     </div>
   );

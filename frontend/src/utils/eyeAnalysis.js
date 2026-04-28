@@ -1,149 +1,83 @@
-const BLINK_THRESHOLD = 0.25;
-const YAWN_THRESHOLD = 0.6;
+/**
+ * Advanced Eye & Fatigue Analysis
+ * - Dynamic EAR Baseline (First 60s)
+ * - Microsleep Detection (800ms threshold)
+ * - Blink Frequency Trend (Blinks per minute)
+ */
 
-export const calculateEAR = (eyeLandmarks) => {
-  if (!eyeLandmarks || eyeLandmarks.length < 6) {
-    return 0;
+let earHistory = [];
+let blinkHistory = []; // { timestamp }
+let closedStart = null;
+let earBaseline = 0.25; // Default fallback
+let isBaselining = true;
+let baseliningStart = Date.now();
+
+export const analyzeEyes = (faceLandmarks) => {
+  if (!faceLandmarks || faceLandmarks.length < 468) return { fatigueScore: 100, blinkRate: 0, microsleep: false };
+
+  const LEFT_EYE = [33, 160, 158, 133, 153, 144];
+  const RIGHT_EYE = [362, 385, 387, 263, 373, 380];
+
+  const getEAR = (eyeIndices) => {
+    const p = eyeIndices.map(i => faceLandmarks[i]);
+    const v1 = Math.sqrt(Math.pow(p[1].x - p[5].x, 2) + Math.pow(p[1].y - p[5].y, 2));
+    const v2 = Math.sqrt(Math.pow(p[2].x - p[4].x, 2) + Math.pow(p[2].y - p[4].y, 2));
+    const h = Math.sqrt(Math.pow(p[0].x - p[3].x, 2) + Math.pow(p[0].y - p[3].y, 2));
+    return (v1 + v2) / (2.0 * h);
+  };
+
+  const ear = (getEAR(LEFT_EYE) + getEAR(RIGHT_EYE)) / 2;
+  
+  // Dynamic Baselining (First 60 seconds)
+  if (isBaselining) {
+    earHistory.push(ear);
+    if (Date.now() - baseliningStart > 60000) {
+      isBaselining = false;
+      const sorted = [...earHistory].sort((a, b) => a - b);
+      earBaseline = sorted[Math.floor(sorted.length * 0.8)]; // Use 80th percentile as open baseline
+      console.log("EAR Baseline Calibrated:", earBaseline);
+    }
   }
 
-  const p1 = eyeLandmarks[1]; // Eye upper 1
-  const p2 = eyeLandmarks[2]; // Eye upper 2
-  const p3 = eyeLandmarks[3]; // Eye upper 3
-  const p4 = eyeLandmarks[4]; // Eye lower 1
-  const p5 = eyeLandmarks[5]; // Eye lower 2
-  const p6 = eyeLandmarks[6]; // Eye lower 3
+  // Blink Detection & Microsleep
+  const threshold = earBaseline * 0.65;
+  let isClosed = ear < threshold;
+  let microsleep = false;
 
-  const dist1 = Math.sqrt(Math.pow(p2.x - p6.x, 2) + Math.pow(p2.y - p6.y, 2));
-  const dist2 = Math.sqrt(Math.pow(p3.x - p5.x, 2) + Math.pow(p3.y - p5.y, 2));
-  const dist3 = Math.sqrt(Math.pow(p1.x - p4.x, 2) + Math.pow(p1.y - p4.y, 2));
-
-  return (dist1 + dist2) / (2.0 * dist3);
-};
-
-export const analyzeEyes = (faceLandmarks, sessionState) => {
-  if (!faceLandmarks || faceLandmarks.length < 400) {
-    return {
-      blinkRate: 0,
-      eyeFatigue: false,
-      triggerBreak: false,
-    };
+  if (isClosed) {
+    if (!closedStart) closedStart = Date.now();
+    const closedDuration = Date.now() - closedStart;
+    if (closedDuration > 800) microsleep = true;
+  } else {
+    if (closedStart && (Date.now() - closedStart) > 50 && (Date.now() - closedStart) < 400) {
+      blinkHistory.push(Date.now());
+    }
+    closedStart = null;
   }
 
-  const LEFT_EYE_START = 33;
-  const RIGHT_EYE_START = 263;
+  // Blink Frequency (Last 5 minutes)
+  const fiveMinsAgo = Date.now() - 300000;
+  blinkHistory = blinkHistory.filter(t => t > fiveMinsAgo);
+  const blinkRate = Math.round(blinkHistory.length / 5); // BPM
 
-  const leftEyeRegion = faceLandmarks.slice(LEFT_EYE_START, LEFT_EYE_START + 13);
-  const rightEyeRegion = faceLandmarks.slice(RIGHT_EYE_START, RIGHT_EYE_START + 13);
-
-  const leftEAR = calculateEAR(leftEyeRegion);
-  const rightEAR = calculateEAR(rightEyeRegion);
-  const avgEAR = (leftEAR + rightEAR) / 2;
-
-  // Update session state with blink detection
-  if (!sessionState.lastEAR) {
-    sessionState.lastEAR = avgEAR;
-    sessionState.blinkCount = 0;
-    sessionState.framesSinceBlink = 0;
-    sessionState.blinkTimestamps = [];
-    sessionState.sessionStartTime = Date.now();
-  }
-
-  let blinkDetected = false;
-  if (sessionState.lastEAR > BLINK_THRESHOLD && avgEAR <= BLINK_THRESHOLD) {
-    blinkDetected = true;
-    sessionState.blinkCount += 1;
-    sessionState.blinkTimestamps.push(Date.now());
-    sessionState.framesSinceBlink = 0;
-  }
-
-  sessionState.lastEAR = avgEAR;
-  sessionState.framesSinceBlink += 1;
-
-  // Calculate blink rate (blinks per minute over last 60 seconds)
-  const now = Date.now();
-  const sixtySecondsAgo = now - 60000;
-
-  sessionState.blinkTimestamps = sessionState.blinkTimestamps.filter(
-    (timestamp) => timestamp > sixtySecondsAgo
-  );
-
-  const blinkRate = sessionState.blinkTimestamps.length;
-
-  // Normal blink rate is 15-20 per minute; fatigue if < 10
-  const eyeFatigue = blinkRate < 10;
-
-  // Calculate screen time
-  const elapsedSeconds = (now - sessionState.sessionStartTime) / 1000;
-  const triggerBreak = elapsedSeconds > 1200; // 20 minutes
+  // Fatigue Score calculation
+  let fatigueScore = 100;
+  if (blinkRate < 8) fatigueScore -= 30; // Eye strain indicator
+  if (microsleep) fatigueScore = 0;
+  else if (isClosed) fatigueScore -= 10;
 
   return {
+    fatigueScore: Math.max(0, fatigueScore),
     blinkRate,
-    eyeFatigue,
-    triggerBreak,
-    avgEAR,
+    microsleep,
+    isBaselining
   };
 };
 
-export const detectYawn = (faceLandmarks, sessionState) => {
-  if (!faceLandmarks || faceLandmarks.length < 400) {
-    return {
-      yawnDetected: false,
-    };
-  }
-
-  // Mouth landmarks for MAR calculation
-  const MOUTH_TOP = 13;
-  const MOUTH_BOTTOM = 14;
-  const MOUTH_LEFT = 78;
-  const MOUTH_RIGHT = 308;
-
-  const mouthTop = faceLandmarks[MOUTH_TOP];
-  const mouthBottom = faceLandmarks[MOUTH_BOTTOM];
-  const mouthLeft = faceLandmarks[MOUTH_LEFT];
-  const mouthRight = faceLandmarks[MOUTH_RIGHT];
-
-  if (!mouthTop || !mouthBottom || !mouthLeft || !mouthRight) {
-    return { yawnDetected: false };
-  }
-
-  const verticalDist = Math.sqrt(
-    Math.pow(mouthTop.x - mouthBottom.x, 2) +
-    Math.pow(mouthTop.y - mouthBottom.y, 2)
-  );
-
-  const horizontalDist = Math.sqrt(
-    Math.pow(mouthLeft.x - mouthRight.x, 2) +
-    Math.pow(mouthLeft.y - mouthRight.y, 2)
-  );
-
-  const MAR = verticalDist / horizontalDist;
-
-  if (!sessionState.yawnState) {
-    sessionState.yawnState = {
-      MAR: MAR,
-      startTime: null,
-      isYawning: false,
-    };
-  }
-
-  const YAWN_THRESHOLD_VALUE = 0.6;
-
-  if (MAR > YAWN_THRESHOLD_VALUE) {
-    if (!sessionState.yawnState.isYawning) {
-      sessionState.yawnState.isYawning = true;
-      sessionState.yawnState.startTime = Date.now();
-    } else {
-      const yawnDuration = (Date.now() - sessionState.yawnState.startTime) / 1000;
-      if (yawnDuration > 2) {
-        return { yawnDetected: true };
-      }
-    }
-  } else {
-    sessionState.yawnState.isYawning = false;
-    sessionState.yawnState.startTime = null;
-  }
-
-  sessionState.yawnState.MAR = MAR;
-
-  return { yawnDetected: false };
+export const detectYawn = (faceLandmarks) => {
+  if (!faceLandmarks) return false;
+  const TOP_LIP = 13;
+  const BOTTOM_LIP = 14;
+  const dist = Math.abs(faceLandmarks[TOP_LIP].y - faceLandmarks[BOTTOM_LIP].y);
+  return dist > 0.05;
 };

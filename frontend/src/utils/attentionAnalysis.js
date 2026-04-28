@@ -1,97 +1,65 @@
-export const analyzeAttention = (faceLandmarks, sessionState) => {
-  if (!faceLandmarks || faceLandmarks.length < 400) {
-    return {
-      lookingAway: false,
-      idle: false,
-      focusScore: 100,
-    };
-  }
+/**
+ * Advanced Attention & Gaze Analysis
+ * - Quadrant-based gaze mapping (9 zones)
+ * - Head bobbing detection (Drowsiness)
+ * - Center zone persistence
+ */
+
+let verticalHeadHistory = [];
+
+export const analyzeAttention = (faceLandmarks) => {
+  if (!faceLandmarks || faceLandmarks.length < 468) return { focusScore: 0, status: 'Unknown', quadrant: 4 };
 
   const NOSE = 1;
-  const LEFT_EAR_X = 123;
-  const RIGHT_EAR_X = 352;
-
+  const LEFT_EYE_INNER = 133;
+  const RIGHT_EYE_INNER = 362;
+  
   const nose = faceLandmarks[NOSE];
-  const leftEar = faceLandmarks[LEFT_EAR_X];
-  const rightEar = faceLandmarks[RIGHT_EAR_X];
+  
+  // 1. Quadrant Mapping (Simplified Gaze via Head Orientation)
+  // Divide 0-1 range into 3x3 grid
+  const col = nose.x < 0.33 ? 0 : nose.x < 0.66 ? 1 : 2;
+  const row = nose.y < 0.33 ? 0 : nose.y < 0.66 ? 1 : 2;
+  const quadrant = row * 3 + col; // 0-8
 
-  if (!nose || !leftEar || !rightEar) {
-    return {
-      lookingAway: false,
-      idle: false,
-      focusScore: 100,
-    };
+  // 2. Head Bobbing Detection
+  verticalHeadHistory.push(nose.y);
+  if (verticalHeadHistory.length > 60) verticalHeadHistory.shift();
+
+  let isBobbing = false;
+  if (verticalHeadHistory.length > 30) {
+    const range = Math.max(...verticalHeadHistory) - Math.min(...verticalHeadHistory);
+    // 0.05 normalized height is approx 15-20px on 720p
+    if (range > 0.08) isBobbing = true; 
   }
 
-  if (!sessionState.attention) {
-    sessionState.attention = {
-      focusScore: 100,
-      lookingAwayStartTime: null,
-      lastFaceDetectedTime: Date.now(),
-      idleStartTime: null,
-      lookingAwayEvents: 0,
-      idleEvents: 0,
-    };
+  // 3. Focus Scoring
+  let focusScore = 100;
+  let status = 'Focused';
+
+  // If looking at extreme edges (quadrants 0, 2, 6, 8)
+  if ([0, 2, 6, 8].includes(quadrant)) {
+    focusScore -= 30;
+    status = 'Edge Gazing';
   }
 
-  const now = Date.now();
-
-  // Calculate face yaw (nose position relative to ear midpoint)
-  const earMidX = (leftEar.x + rightEar.x) / 2;
-  const yawAngle = Math.abs(nose.x - earMidX) * 100; // Simplified yaw calculation
-
-  let lookingAway = false;
-  let idle = false;
-
-  // Looking away detection
-  if (yawAngle > 30) {
-    if (!sessionState.attention.lookingAwayStartTime) {
-      sessionState.attention.lookingAwayStartTime = now;
-    } else {
-      const lookingAwayDuration = (now - sessionState.attention.lookingAwayStartTime) / 1000;
-      if (lookingAwayDuration > 5) {
-        lookingAway = true;
-
-        if (!sessionState.attention.lookingAwayReported) {
-          sessionState.attention.focusScore = Math.max(0, sessionState.attention.focusScore - 5);
-          sessionState.attention.lookingAwayEvents += 1;
-          sessionState.attention.lookingAwayReported = true;
-        }
-      }
-    }
-  } else {
-    sessionState.attention.lookingAwayStartTime = null;
-    sessionState.attention.lookingAwayReported = false;
+  if (isBobbing) {
+    focusScore -= 50;
+    status = 'Drowsy / Bobbing';
   }
 
-  // Face detection tracking for idle detection
-  sessionState.attention.lastFaceDetectedTime = now;
-
-  // Idle detection (no face detected for 10+ seconds)
-  if (!sessionState.attention.idleStartTime) {
-    sessionState.attention.idleStartTime = now;
-  } else {
-    const idleDuration = (now - sessionState.attention.idleStartTime) / 1000;
-    if (idleDuration > 10) {
-      idle = true;
-
-      if (!sessionState.attention.idleReported) {
-        sessionState.attention.focusScore = Math.max(0, sessionState.attention.focusScore - 10);
-        sessionState.attention.idleEvents += 1;
-        sessionState.attention.idleReported = true;
-      }
-    }
-  }
-
-  // Reset idle if face is detected
-  if (nose.visibility > 0.5) {
-    sessionState.attention.idleStartTime = now;
-    sessionState.attention.idleReported = false;
+  // Yaw/Pitch for "Looking Away"
+  const eyeCenter = (faceLandmarks[LEFT_EYE_INNER].x + faceLandmarks[RIGHT_EYE_INNER].x) / 2;
+  const yaw = Math.abs(nose.x - eyeCenter);
+  if (yaw > 0.05) {
+    focusScore -= 40;
+    status = 'Looking Away';
   }
 
   return {
-    lookingAway,
-    idle,
-    focusScore: Math.max(0, Math.min(100, sessionState.attention.focusScore)),
+    focusScore: Math.max(0, focusScore),
+    status,
+    quadrant,
+    isBobbing
   };
 };

@@ -25,7 +25,7 @@ const FatigueAlert = ({ faceLandmarks, poseLandmarks }) => {
       newAlerts.push({
         id: 'fatigue',
         type: 'fatigue',
-        message: '👁️ Eye fatigue detected — blink more',
+        message: 'Eye fatigue detected. Blink more frequently.',
       });
 
       if (!voiceFeedbackRef.current.fatigueSaid) {
@@ -40,7 +40,7 @@ const FatigueAlert = ({ faceLandmarks, poseLandmarks }) => {
       newAlerts.push({
         id: 'break',
         type: 'break',
-        message: '🕐 20-20-20 Break Time! Look 20 feet away for 20 seconds.',
+        message: '20-20-20 break: look 20 feet away for 20 seconds.',
       });
 
       setBreakTimer(true);
@@ -56,7 +56,7 @@ const FatigueAlert = ({ faceLandmarks, poseLandmarks }) => {
       newAlerts.push({
         id: 'yawn',
         type: 'yawn',
-        message: '😴 You seem tired, take a break',
+        message: 'Fatigue detected. Consider a short break.',
       });
 
       if (!voiceFeedbackRef.current.yawnSaid) {
@@ -71,7 +71,7 @@ const FatigueAlert = ({ faceLandmarks, poseLandmarks }) => {
       newAlerts.push({
         id: 'attention',
         type: 'attention',
-        message: '🔍 Low focus detected — look back at screen',
+        message: 'Low focus detected. Look back at the screen.',
       });
 
       if (!voiceFeedbackRef.current.attentionSaid) {
@@ -121,7 +121,7 @@ const FatigueAlert = ({ faceLandmarks, poseLandmarks }) => {
     <div className="fatigue-alert">
       {alerts.length === 0 ? (
         <div className="card">
-          <h3>👀 Eye Health</h3>
+          <h3>Eye health</h3>
           <div className="blink-stats">
             <div className="stat-item">
               <div className="stat-label">Blink Rate</div>
