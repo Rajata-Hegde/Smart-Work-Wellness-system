@@ -26,7 +26,7 @@ const PostureDetails = ({ metrics }) => {
       <MetricItem label="Spinal Alignment" value={metrics.alignment} />
       <MetricItem label="Shoulder Symmetry" value={metrics.symmetry} />
       <MetricItem label="Head Tilt" value={metrics.headTilt} />
-      <MetricItem label="Hip Slide" value={metrics.hipSlide} />
+      <MetricItem label="Screen Proximity" value={metrics.proximity} />
     </div>
   );
 };

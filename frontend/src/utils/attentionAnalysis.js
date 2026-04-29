@@ -8,7 +8,7 @@
 let verticalHeadHistory = [];
 
 export const analyzeAttention = (faceLandmarks) => {
-  if (!faceLandmarks || faceLandmarks.length < 468) return { focusScore: 0, status: 'Unknown', quadrant: 4 };
+  if (!faceLandmarks || faceLandmarks.length < 468) return { focusScore: 0, status: 'No Face Detected', quadrant: 4 };
 
   const NOSE = 1;
   const LEFT_EYE_INNER = 133;

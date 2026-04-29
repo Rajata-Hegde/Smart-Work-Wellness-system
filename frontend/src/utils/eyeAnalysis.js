@@ -13,7 +13,7 @@ let isBaselining = true;
 let baseliningStart = Date.now();
 
 export const analyzeEyes = (faceLandmarks) => {
-  if (!faceLandmarks || faceLandmarks.length < 468) return { fatigueScore: 100, blinkRate: 0, microsleep: false };
+  if (!faceLandmarks || faceLandmarks.length < 468) return { fatigueScore: 0, blinkRate: 0, microsleep: false, isBaselining: false };
 
   const LEFT_EYE = [33, 160, 158, 133, 153, 144];
   const RIGHT_EYE = [362, 385, 387, 263, 373, 380];
@@ -66,10 +66,15 @@ export const analyzeEyes = (faceLandmarks) => {
   if (microsleep) fatigueScore = 0;
   else if (isClosed) fatigueScore -= 10;
 
+  // Yawning detection
+  const yawning = detectYawn(faceLandmarks);
+  if (yawning) fatigueScore -= 20;
+
   return {
     fatigueScore: Math.max(0, fatigueScore),
     blinkRate,
     microsleep,
+    yawning,
     isBaselining
   };
 };

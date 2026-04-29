@@ -92,6 +92,8 @@ const Webcam = ({ onResults }) => {
       onResultsRef.current({
         pose: results.poseLandmarks,
         face: results.faceLandmarks,
+        leftHand: results.leftHandLandmarks,
+        rightHand: results.rightHandLandmarks,
       });
     }
   }, []);

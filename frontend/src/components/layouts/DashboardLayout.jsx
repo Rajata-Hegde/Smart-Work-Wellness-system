@@ -9,7 +9,9 @@ import {
   Volume2,
   VolumeX,
   Eye,
-  Shield
+  Shield,
+  Activity,
+  Timer
 } from 'lucide-react';
 import useWellnessStore from '../../store/useWellnessStore';
 

@@ -30,8 +30,7 @@ const ScoreCard = ({ title, value = 0, icon: Icon, color, trend = 0, unit = '%' 
         gap: 'var(--space-md)',
         position: 'relative',
         overflow: 'hidden',
-        minHeight: '160px',
-        justifyContent: 'space-between'
+        justifyContent: 'center'
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -61,26 +60,35 @@ const ScoreCard = ({ title, value = 0, icon: Icon, color, trend = 0, unit = '%' 
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-        <div>
-          <h3 style={{ fontSize: '0.7rem', color: 'var(--secondary)', textTransform: 'uppercase', fontWeight: 800, letterSpacing: '0.05em', marginBottom: '2px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-sm)' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3 style={{ 
+            fontSize: '0.65rem', 
+            color: 'var(--secondary)', 
+            textTransform: 'uppercase', 
+            fontWeight: 800, 
+            letterSpacing: '0.05em', 
+            marginBottom: '4px',
+            lineHeight: 1.2,
+            wordBreak: 'break-word'
+          }}>
             {title}
           </h3>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '2px' }}>
-            <span style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)' }}>{Math.round(safeValue)}</span>
-            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--secondary)' }}>{unit}</span>
+            <span style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--primary)', lineHeight: 1 }}>{Math.round(safeValue)}</span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--secondary)' }}>{unit}</span>
           </div>
         </div>
 
-        <div style={{ position: 'relative', width: '64px', height: '64px' }}>
-          <svg width="64" height="64" viewBox="0 0 80 80">
+        <div style={{ position: 'relative', width: '56px', height: '56px', flexShrink: 0 }}>
+          <svg width="56" height="56" viewBox="0 0 80 80">
             <circle
               cx="40"
               cy="40"
               r={radius}
               fill="none"
               stroke="var(--divider)"
-              strokeWidth="8"
+              strokeWidth="10"
             />
             <motion.circle
               cx="40"
@@ -88,7 +96,7 @@ const ScoreCard = ({ title, value = 0, icon: Icon, color, trend = 0, unit = '%' 
               r={radius}
               fill="none"
               stroke={statusColor}
-              strokeWidth="8"
+              strokeWidth="10"
               strokeDasharray={circumference}
               initial={{ strokeDashoffset: circumference }}
               animate={{ strokeDashoffset: offset }}
@@ -104,7 +112,7 @@ const ScoreCard = ({ title, value = 0, icon: Icon, color, trend = 0, unit = '%' 
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: '0.65rem',
-            fontWeight: 800,
+            fontWeight: 900,
             color: statusColor
           }}>
             {Math.round(safeValue)}%

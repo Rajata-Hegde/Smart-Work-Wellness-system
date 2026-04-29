@@ -58,7 +58,7 @@ const useWellnessStore = create(
           alignment: 100,
           symmetry: 100,
           headTilt: 100,
-          hipSlide: 100,
+          proximity: 100,
           wrist: 100
         }
       },

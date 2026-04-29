@@ -16,9 +16,16 @@ let historicalScores = [];
 
 export const analyzePosture = (rawLandmarks) => {
   if (!rawLandmarks || rawLandmarks.length < 25) return { 
-    label: 'Initializing...', 
+    label: 'No User Detected', 
     score: 0, 
-    metrics: {}, 
+    metrics: {
+      forwardHead: 0,
+      alignment: 0,
+      symmetry: 0,
+      headTilt: 0,
+      hipSlide: 0,
+      wrist: 0
+    }, 
     isHorizontal: false 
   };
 
@@ -75,21 +82,13 @@ export const analyzePosture = (rawLandmarks) => {
   let m3 = 100 - Math.min(100, (shoulderSymRatio / 8) * 100); // 8% is severe
 
   // --- METRIC 4: Head Tilt ---
-  const headTiltPx = Math.abs(le.y - re.y) * 1000; // Normalized to ~1000px height
-  let m4 = 100 - Math.min(100, (headTiltPx / 20) * 100); // 20px is severe
+  const headTiltRatio = (Math.abs(le.y - re.y) / headSize) * 100;
+  let m4 = 100 - Math.min(100, (headTiltRatio / 30) * 100); // 30% of head size is severe tilt
 
-  // --- METRIC 5: Hip Slide ---
-  const now = Date.now();
-  hipSlideHistory.push({ time: now, y: hipMidY });
-  const tenMinsAgo = now - 600000;
-  hipSlideHistory = hipSlideHistory.filter(h => h.time > tenMinsAgo);
-  
-  let m5 = 100;
-  if (hipSlideHistory.length > 2) {
-    const drift = hipMidY - hipSlideHistory[0].y;
-    // 0.04 normalized is approx 40px
-    m5 = 100 - Math.min(100, (Math.max(0, drift) / 0.04) * 100);
-  }
+  // --- METRIC 5: Screen Proximity ---
+  // Ideal headSize is approx 0.1 to 0.15 for laptop distance
+  // If headSize > 0.22, they are likely leaning too close
+  let m5 = 100 - Math.min(100, (Math.max(0, headSize - 0.18) / 0.1) * 100);
 
   // --- METRIC 6: Wrist Deviation ---
   let m6 = 100;
@@ -124,7 +123,7 @@ export const analyzePosture = (rawLandmarks) => {
       alignment: Math.round(m2),
       symmetry: Math.round(m3),
       headTilt: Math.round(m4),
-      hipSlide: Math.round(m5),
+      proximity: Math.round(m5),
       wrist: Math.round(m6)
     },
     isHorizontal: false
